@@ -1,0 +1,6 @@
+bus_id,name,control_area,load_zone
+1,NSW,1,1
+2,QLD,2,2
+3,VIC,3,3
+4,TAS,4,4
+5,SA,5,5
