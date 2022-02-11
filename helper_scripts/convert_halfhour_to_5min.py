@@ -7,7 +7,7 @@ def arg_parser():
     parser = argparse.ArgumentParser(description=description)
     parser.add_argument('-path', type=str, required=True,
                         help='Path to file.')
-    parser.add_argument('-year', type=int, required=False,
+    parser.add_argument('-year', type=int, required=True,
                         help='Year to filter, if provided')
     args = parser.parse_args()
     return args
@@ -27,9 +27,17 @@ if __name__ == "__main__":
     pivot = pivot.sort_values('Datetime')
     pivot.drop(columns=['Date', 'HH'], inplace=True)
     pivot.set_index('Datetime', inplace=True)
-    if year:
-        start = f'{year}-01-01 00:05:00'
-        end = f'{year + 1}-01-01 00:00:00'
-        pivot = pivot[start:end]
+    start = f'{year}-01-01 00:05:00'
+    end = f'{year + 1}-01-01 00:00:00'
+    pivot = pivot[start:end]
+    if pivot.index[0].minute != 5:
+        bfill_daterange = pd.date_range(start=f'{year}-01-01 00:05:00',
+                                        end=(pivot.index[0] - 
+                                             pd.Timedelta(minutes=5)), 
+                                        freq='5T')
+        bfill = pd.DataFrame(data=[pivot.iloc[0, 0]] * len(bfill_daterange),
+                             index=bfill_daterange, columns=['gen_mw'])
+        pivot = pd.concat([bfill, pivot], axis=0)
+        pivot.index.name = 'Datetime'
     resampled = pivot.asfreq('5T')
     resampled.interpolate().to_csv(f'{args.path}_5mininterpolated.csv')
