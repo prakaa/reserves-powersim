@@ -11,6 +11,9 @@ using PowerSimulations
 using PowerGraphics
 
 output_dir = joinpath("built", "dispatch_data")
+if !isdir(output_dir)
+    mkpath(output_dir)
+end
 raw_demand = CSV.read(joinpath("data", "demand.csv"), DataFrame)
 
 # create system
@@ -85,14 +88,14 @@ nsw_solar = RenewableDispatch(;
     name = "NSWSolar",
     available = true,
     bus = nsw_bus,
-    active_power = 200.0,
+    active_power = 0.0,
     reactive_power = 0.0,
-    rating = 200.0,
+    rating = 800.0,
     prime_mover = PrimeMovers.PVe,
-    power_factor=1.0,
+    power_factor= 1.0,
     base_power = 1.0,
     reactive_power_limits = (min = -1.0, max = 1.0),
-    operation_cost = TwoPartCost(0.0, 1.0)
+    operation_cost = TwoPartCost(VariableCost(0.0), 0.0)
 )
 
 # loads
@@ -122,18 +125,19 @@ di_year = collect(DateTime("01/01/2019 00:05", date_format):
                   Dates.Minute(5):
                   DateTime("01/01/2020 00:00", date_format))
 nsw_demand_data = TimeArray(di_year, raw_demand[:, :nsw_demand])
-nsw_demand = SingleTimeSeries("max_active_power", nsw_demand_data)
-add_time_series!(sys, nsw_load, nsw_demand)
+nsw_demand_ts = SingleTimeSeries("max_active_power", nsw_demand_data)
+add_time_series!(sys, nsw_load, nsw_demand_ts)
+
+# add PV generation timeseries
+pv_gen = CSV.read("data/nsw_pv_manildra.csv_5mininterpolated.csv", 
+                  dateformat="yyyy-mm-dd H:M:S", DataFrame)
+pv_gen_data = TimeArray(pv_gen[:, :Datetime], pv_gen[:, :gen_mw])
+pv_gen_ts = SingleTimeSeries("max_active_power", pv_gen_data)
+add_time_series!(sys, nsw_solar, pv_gen_ts)
 
 # add reserve timeseries
 add_time_series!(
     sys, or, SingleTimeSeries("requirement", TimeArray(di_year, ones(length(di_year))))
-    )
-
-# add VRE forecast timeseries
-add_time_series!(
-    sys, nsw_solar, 
-    SingleTimeSeries("max_active_power", TimeArray(di_year, ones(length(di_year))))
     )
 
 # use SingleTimeSeries as forecasts
@@ -163,14 +167,15 @@ sim_sequence = SimulationSequence(
 )
 sim = Simulation(
     name="economic_dispatch",
-    steps=100,
+    steps=288,
     problems=sim_problem,
     sequence=sim_sequence,
-    simulation_folder=output_dir
+    simulation_folder=output_dir,
 )
 
 build!(sim; serialize=true, console_level=Logging.Debug)
-execute!(sim)
+execute!(sim;)
+#execute!(sim; exports="export.json")
 
 results = SimulationResults(joinpath(output_dir, "economic_dispatch"))
 ed_results = get_problem_results(results, "ED")
