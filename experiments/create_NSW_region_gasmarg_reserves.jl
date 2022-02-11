@@ -86,6 +86,7 @@ tallawarra = ThermalStandard(;
     time_limits = (up = 4.0, down = 4.0),
     ramp_limits = (up = 6.0, down = 6.0),
     operation_cost = ThreePartCost(
+    # cost of $12/Mw/hr then $48/Mw/hr which translates to prices of $1 and $4
         VariableCost([(100.0 * 12.0, 100.0), ((3000.0-100.0) * 48.0 + 100.0 * 12.0, 3000.0)]),
         0.0, 50.0, 50.0),
     base_power = 1.0,
