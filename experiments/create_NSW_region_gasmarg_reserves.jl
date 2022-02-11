@@ -1,4 +1,4 @@
-# This run of the model excludes reserves and sets all generation bar gas as zero cost
+# This run of the model sets all generation bar gas as zero cost with reserves
 using CSV
 using Cbc
 using Dates
@@ -68,7 +68,7 @@ bayswater = ThermalStandard(;
     fuel=ThermalFuels.COAL,
     )
 
-# Costs - 0 is min gen
+# Costs
 tallawarra = ThermalStandard(;
     name = "Tallawarra",
     available = true,
@@ -119,17 +119,17 @@ nsw_load = PowerLoad(
 )
 add_components!(sys, [nsw_bus, tallawarra, bayswater, nsw_solar, nsw_load])
 
-## reserves
+# reserves
 ## bug in StaticReserve - add static requirement for VariableReserve
-#or = VariableReserve{ReserveUp}("OR", true, 300.0, 50.0)
-#add_component!(sys, or)
-#set_services!(bayswater, [or])
-#set_services!(tallawarra, [or])
-#
-## add reserve timeseries
-#add_time_series!(
-#    sys, or, SingleTimeSeries("requirement", TimeArray(di_year, ones(length(di_year))))
-#    )
+or = VariableReserve{ReserveUp}("OR", true, 300.0, 50.0)
+add_component!(sys, or)
+set_services!(bayswater, [or])
+set_services!(tallawarra, [or])
+
+# add reserve timeseries
+add_time_series!(
+    sys, or, SingleTimeSeries("requirement", TimeArray(di_year, ones(length(di_year))))
+    )
 
 # add load timeseries
 date_format = Dates.DateFormat("d/m/y H:M")
@@ -155,11 +155,12 @@ ed_problem_template = OperationsProblemTemplate()
 set_device_model!(ed_problem_template, ThermalStandard, ThermalDispatch)
 set_device_model!(ed_problem_template, PowerLoad, StaticPowerLoad)
 set_device_model!(ed_problem_template, RenewableDispatch, RenewableConstantPowerFactor)
-#set_service_model!(ed_problem_template, VariableReserve{ReserveUp}, RampReserve)
+set_service_model!(ed_problem_template, VariableReserve{ReserveUp}, RampReserve)
 ## dual for reserves - :requirement__VariableReserve_ReserveUp
 problem = OperationsProblem(ed_problem_template, sys;
                             optimizer=solver, 
-                            constraint_duals=[:CopperPlateBalance],
+                            constraint_duals=[:CopperPlateBalance,
+                                              :requirement__VariableReserve_ReserveUp],
                             horizon=1, 
                             balance_slack_variables=true
                             )
@@ -189,17 +190,24 @@ ed_results = get_problem_results(results, "ED")
 timestamps = get_realized_timestamps(ed_results)
 variables = read_realized_variables(ed_results)
 generation = get_generation_data(ed_results)
-#reserves = get_service_data(ed_results)
+reserves = get_service_data(ed_results)
 
 gr()
 set_system!(ed_results, sys)
 p = plot_fuel(ed_results, stack=true)
-savefig(p, "results/fuel_gasmarg.png")
-prices = read_realized_duals(ed_results)[:CopperPlateBalance]
+savefig(p, "results/fuel_gasmarg_reserves.png")
+duals = read_realized_duals(ed_results)
+prices = duals[:CopperPlateBalance]
+reserves_prices = duals[:requirement__VariableReserve_ReserveUp][:, 2]
 
 if !isdir("results")
     mkdir("results")
 end
-price_analysis = hcat(prices, generation.data[:P__ThermalStandard][!, :Tallawarra])
-DataFrames.rename!(price_analysis, ("x1"=>"tallawarra_mw"))
-CSV.write("results/prices.csv", price_analysis)
+price_analysis = hcat(prices, reserves_prices, 
+                      reserves.data[:OR__VariableReserve_ReserveUp][!, 2:3],
+                      generation.data[:P__ThermalStandard][!, :Tallawarra],
+                      makeunique=true)
+DataFrames.rename!(price_analysis, ["Datetime", "CopperPlateBalance",
+                                    "ReserveDual", "bayswater_reserves",
+                                    "tallawarra_reserves", "tallawarra_mw"])
+CSV.write("results/prices_with_reserves.csv", price_analysis)
