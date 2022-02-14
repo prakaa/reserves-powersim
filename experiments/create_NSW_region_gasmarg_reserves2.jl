@@ -227,7 +227,7 @@ reserves = get_service_data(ed_results)
 gr()
 set_system!(ed_results, sys)
 p = plot_fuel(ed_results, stack=true);
-savefig(p, "results/fuel_gasmarg_reserves.png")
+savefig(p, "results/fuel_gasmarg_reserves2.png")
 duals = read_realized_duals(ed_results)
 prices = duals[:CopperPlateBalance]
 reserves_prices = duals[:requirement__VariableReserve_ReserveUp][:, 2]
@@ -245,4 +245,4 @@ DataFrames.rename!(price_analysis, ["Datetime", "CopperPlateBalance",
                                     "ReserveDual", "bayswater_reserves",
                                     "peaker_reserves", "tallawarra_reserves", 
                                     "bayswater_mw", "tallawarra_mw", "peaker_mw"])
-CSV.write("results/prices_with_reserves.csv", price_analysis)
+CSV.write("results/prices_with_reserves2.csv", price_analysis)
