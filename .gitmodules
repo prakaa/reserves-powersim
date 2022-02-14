@@ -1,0 +1,3 @@
+[submodule "PowerSimulations.jl"]
+	path = PowerSimulations.jl
+	url = https://github.com/NREL-SIIP/PowerSimulations.jl.git
