@@ -15,7 +15,6 @@ output_dir = joinpath("built", "dispatch_data")
 if !isdir(output_dir)
     mkpath(output_dir)
 end
-raw_demand = CSV.read(joinpath("data", "demand.csv"), DataFrame)
 
 # create system
 sys = System(
@@ -26,14 +25,14 @@ set_units_base_system!(sys, "NATURAL_UNITS")
 
 # zone
 nsw_zone = LoadZone("NSW-LoadZone",
-                    maximum(raw_demand[:, :nsw_demand]),
+                    0.0,
                     0.0
                     )
 add_component!(sys, nsw_zone)
 
 # buses
 nsw_bus = Bus(1,
-              "NSW", 
+              "NSW",
               "REF",
               nothing,
               nothing,
@@ -69,7 +68,7 @@ bayswater = ThermalStandard(;
     fuel=ThermalFuels.COAL,
     )
 
-## ccgt, cost of $0/MW/hr to min load, then $36/MW/hr then $48/MW/hr 
+## ccgt, cost of $0/MW/hr to min load, then $36/MW/hr then $48/MW/hr
 tallawarra = ThermalStandard(;
     name = "Tallawarra",
     available = true,
@@ -115,7 +114,7 @@ peaker = ThermalMultiStart(;
     operation_cost = ThreePartCost(
     # cost of $1000/hr
         VariableCost([(2e4, 1e2), (9.2e5, 1e3)]),
-        1e3, 0.0, 0.0), 
+        1e3, 0.0, 0.0),
         base_power = 1.0
     )
 
@@ -160,12 +159,13 @@ date_format = Dates.DateFormat("d/m/y H:M")
 di_year = collect(DateTime("01/01/2019 00:05", date_format):
                   Dates.Minute(5):
                   DateTime("01/01/2020 00:00", date_format))
+raw_demand = CSV.read(joinpath("data", "demand.csv"), DataFrame)
 nsw_demand_data = TimeArray(di_year, raw_demand[:, :nsw_demand])
 nsw_demand_ts = SingleTimeSeries("max_active_power", nsw_demand_data)
 add_time_series!(sys, nsw_load, nsw_demand_ts)
 
 # add PV generation timeseries
-pv_gen = CSV.read("data/nsw_pv_manildra.csv_5mininterpolated.csv", 
+pv_gen = CSV.read("data/nsw_pv_manildra.csv_5mininterpolated.csv",
                   dateformat="yyyy-mm-dd H:M:S", DataFrame)
 pv_gen_data = TimeArray(pv_gen[:, :Datetime], pv_gen[:, :gen_mw])
 pv_gen_ts = SingleTimeSeries("max_active_power", pv_gen_data)
@@ -189,7 +189,7 @@ set_device_model!(ed_problem_template, RenewableDispatch, RenewableConstantPower
 set_service_model!(ed_problem_template, VariableReserve{ReserveUp}, RampReserve)
 ## dual for reserves - :requirement__VariableReserve_ReserveUp
 problem = OperationsProblem(ed_problem_template, sys;
-                            optimizer=solver, 
+                            optimizer=solver,
                             constraint_duals=[:CopperPlateBalance,
                                               :requirement__VariableReserve_ReserveUp],
                             horizon=1,
@@ -197,7 +197,7 @@ problem = OperationsProblem(ed_problem_template, sys;
                             services_slack_variables=true
                             )
 # test op problem
-build!(problem, output_dir = joinpath("built", "problemdata"))
+build!(problem, output_dir = joinpath(output_dir, "built"))
 
 sim_problem = SimulationProblems(ED=problem)
 sim_sequence = SimulationSequence(
@@ -235,7 +235,7 @@ reserves_prices = duals[:requirement__VariableReserve_ReserveUp][:, 2]
 if !isdir("results")
     mkdir("results")
 end
-price_analysis = hcat(prices, reserves_prices, 
+price_analysis = hcat(prices, reserves_prices,
                       reserves.data[:OR__VariableReserve_ReserveUp][!, 2:4],
                       generation.data[:P__ThermalStandard][!, :Bayswater],
                       generation.data[:P__ThermalStandard][!, :Tallawarra],
@@ -243,6 +243,6 @@ price_analysis = hcat(prices, reserves_prices,
                       makeunique=true)
 DataFrames.rename!(price_analysis, ["Datetime", "CopperPlateBalance",
                                     "ReserveDual", "bayswater_reserves",
-                                    "peaker_reserves", "tallawarra_reserves", 
+                                    "peaker_reserves", "tallawarra_reserves",
                                     "bayswater_mw", "tallawarra_mw", "peaker_mw"])
 CSV.write("results/prices_with_reserves2.csv", price_analysis)
