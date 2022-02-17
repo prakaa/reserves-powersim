@@ -33,7 +33,7 @@ add_component!(sys, nsw_zone)
 
 # buses
 nsw_bus = Bus(1,
-              "NSW", 
+              "NSW",
               "REF",
               nothing,
               nothing,
@@ -127,11 +127,6 @@ add_component!(sys, or)
 set_services!(bayswater, [or])
 set_services!(tallawarra, [or])
 
-# add reserve timeseries
-add_time_series!(
-    sys, or, SingleTimeSeries("requirement", TimeArray(di_year, ones(length(di_year))))
-    )
-
 # add load timeseries
 date_format = Dates.DateFormat("d/m/y H:M")
 di_year = collect(DateTime("01/01/2019 00:05", date_format):
@@ -141,8 +136,13 @@ nsw_demand_data = TimeArray(di_year, raw_demand[:, :nsw_demand])
 nsw_demand_ts = SingleTimeSeries("max_active_power", nsw_demand_data)
 add_time_series!(sys, nsw_load, nsw_demand_ts)
 
+# add reserve timeseries
+add_time_series!(
+    sys, or, SingleTimeSeries("requirement", TimeArray(di_year, ones(length(di_year))))
+    )
+
 # add PV generation timeseries
-pv_gen = CSV.read("data/nsw_pv_manildra.csv_5mininterpolated.csv", 
+pv_gen = CSV.read("data/nsw_pv_manildra.csv_5mininterpolated.csv",
                   dateformat="yyyy-mm-dd H:M:S", DataFrame)
 pv_gen_data = TimeArray(pv_gen[:, :Datetime], pv_gen[:, :gen_mw])
 pv_gen_ts = SingleTimeSeries("max_active_power", pv_gen_data)
@@ -159,10 +159,10 @@ set_device_model!(ed_problem_template, RenewableDispatch, RenewableConstantPower
 set_service_model!(ed_problem_template, VariableReserve{ReserveUp}, RampReserve)
 ## dual for reserves - :requirement__VariableReserve_ReserveUp
 problem = OperationsProblem(ed_problem_template, sys;
-                            optimizer=solver, 
+                            optimizer=solver,
                             constraint_duals=[:CopperPlateBalance,
                                               :requirement__VariableReserve_ReserveUp],
-                            horizon=1, 
+                            horizon=1,
                             balance_slack_variables=true
                             )
 # test op problem
@@ -204,7 +204,7 @@ reserves_prices = duals[:requirement__VariableReserve_ReserveUp][:, 2]
 if !isdir("results")
     mkdir("results")
 end
-price_analysis = hcat(prices, reserves_prices, 
+price_analysis = hcat(prices, reserves_prices,
                       reserves.data[:OR__VariableReserve_ReserveUp][!, 2:3],
                       generation.data[:P__ThermalStandard][!, :Tallawarra],
                       makeunique=true)
