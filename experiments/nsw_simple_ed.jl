@@ -48,16 +48,12 @@ bayswater = ThermalStandard(;
     bus=nsw_bus,
     active_power=0.0,
     reactive_power=0.0,
-    #rating=2640.0,
     rating=6000.0,
-    #active_power_limits=(min=1000.0, max=2545.0),
     active_power_limits=(min=1000.0, max=6000.0),
     reactive_power_limits=(min=-1.0, max=1.0),
     ramp_limits=(up=20.67, down=15.33),
     operation_cost=ThreePartCost(
-        0.0,
-        #(0.0, 10.0),
-         0.0, 0.0, 0.0
+        0.0, 0.0, 0.0, 0.0
          ),
     base_power=1.0,
     time_limits=(up=0.02, down=0.02),
@@ -65,7 +61,7 @@ bayswater = ThermalStandard(;
     fuel=ThermalFuels.COAL,
     )
 
-# Costs - 0 is min gen
+# price is piecewise linear with slopes ($/MW/hr) of 12, then 48
 tallawarra = ThermalStandard(;
     name = "Tallawarra",
     available = true,
@@ -83,7 +79,8 @@ tallawarra = ThermalStandard(;
     time_limits = (up = 4.0, down = 4.0),
     ramp_limits = (up = 6.0, down = 6.0),
     operation_cost = ThreePartCost(
-        VariableCost([(100.0 * 12.0, 100.0), ((3000.0-100.0) * 48.0 + 100.0 * 12.0, 3000.0)]),
+        VariableCost([(100.0 * 12.0, 100.0),
+                      ((3000.0-100.0) * 48.0 + 100.0 * 12.0, 3000.0)]),
         0.0, 50.0, 50.0),
     base_power = 1.0,
 )
@@ -136,13 +133,14 @@ add_time_series!(sys, nsw_solar, pv_gen_ts)
 # use SingleTimeSeries as forecasts
 transform_single_time_series!(sys, 1, Minute(5))
 
-solver = optimizer_with_attributes(Gurobi.Optimizer)
+# problem template and device formulations
 ed_problem_template = OperationsProblemTemplate()
 set_device_model!(ed_problem_template, ThermalStandard, ThermalDispatch)
 set_device_model!(ed_problem_template, PowerLoad, StaticPowerLoad)
 set_device_model!(ed_problem_template, RenewableDispatch, RenewableConstantPowerFactor)
-#set_service_model!(ed_problem_template, VariableReserve{ReserveUp}, RampReserve)
-## dual for reserves - :requirement__VariableReserve_ReserveUp
+
+# build operations problem
+solver = optimizer_with_attributes(Gurobi.Optimizer)
 problem = OperationsProblem(ed_problem_template, sys;
                             optimizer=solver,
                             constraint_duals=[:CopperPlateBalance],
@@ -150,8 +148,10 @@ problem = OperationsProblem(ed_problem_template, sys;
                             balance_slack_variables=true
                             )
 # test op problem
+# running solve on this runs a single step of the problem
 build!(problem, output_dir = joinpath(output_dir, "ed-build"))
 
+# build simulation sequence, which links steps of the problem
 sim_problem = SimulationProblems(ED=problem)
 sim_sequence = SimulationSequence(
     problems=sim_problem,
@@ -165,16 +165,15 @@ sim = Simulation(
     sequence=sim_sequence,
     simulation_folder=output_dir,
 )
-
 build!(sim; serialize=true, console_level=Logging.Info)
 execute!(sim;)
 
+# extract and output/plot results
 results = SimulationResults(joinpath(output_dir, "economic_dispatch"))
 ed_results = get_problem_results(results, "ED")
 timestamps = get_realized_timestamps(ed_results)
 variables = read_realized_variables(ed_results)
 generation = get_generation_data(ed_results)
-
 if !isdir("results")
     mkdir("results")
 end
@@ -182,7 +181,6 @@ set_system!(ed_results, sys)
 p = plot_fuel(ed_results, stack=true)
 savefig(p, "results/fuel_plot_simple_ed.png")
 prices = read_realized_duals(ed_results)[:CopperPlateBalance]
-
 price_analysis = hcat(prices,
                       generation.data[:P__ThermalStandard][!, [:Bayswater,
                                                                :Tallawarra]])
