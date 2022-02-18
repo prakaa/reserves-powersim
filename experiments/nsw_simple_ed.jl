@@ -1,4 +1,3 @@
-# This run of the model excludes reserves and sets all generation bar gas as zero cost
 using CSV
 using Dates
 using DataFrames

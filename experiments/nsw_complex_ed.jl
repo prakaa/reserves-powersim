@@ -1,9 +1,6 @@
-# This run of the model sets all generation bar gas as zero cost with reserves
 using CSV
-using Cbc
 using Dates
 using DataFrames
-using Ipopt
 using Gurobi
 using Logging
 using TimeSeries
@@ -11,7 +8,7 @@ using PowerSystems
 using PowerSimulations
 using PowerGraphics
 
-output_dir = joinpath("built", "dispatch_data")
+output_dir = joinpath("built", "complex_ed")
 if !isdir(output_dir)
     mkpath(output_dir)
 end
@@ -28,7 +25,6 @@ nsw_zone = LoadZone("NSW-LoadZone",
                     0.0,
                     0.0
                     )
-add_component!(sys, nsw_zone)
 
 # buses
 nsw_bus = Bus(1,
@@ -59,9 +55,7 @@ bayswater = ThermalStandard(;
     ramp_limits=(up=20.67, down=15.33),
     operation_cost=ThreePartCost(
         VariableCost([(1.2e4, 1e3), (1.32e5, 6e3)]),
-        #(0.0, 10.0),
-         0.0, 0.0, 0.0
-         ),
+         0.0, 0.0, 0.0),
     base_power=1.0,
     time_limits=(up=0.02, down=0.02),
     prime_mover=PrimeMovers.ST,
@@ -76,11 +70,9 @@ tallawarra = ThermalStandard(;
     bus = nsw_bus,
     active_power = 0.0,
     reactive_power = 0.0,
-    #rating = 440.0,
     rating = 3000.0,
     prime_mover = PrimeMovers.ST,
     fuel = ThermalFuels.NATURAL_GAS,
-    #active_power_limits = (min = 199.0, max = 395.0),
     active_power_limits = (min = 199.0, max = 3000.0),
     reactive_power_limits = (min = -1.0, max = 1.0),
     time_limits = (up = 4.0, down = 4.0),
@@ -100,10 +92,9 @@ peaker = ThermalMultiStart(;
     bus = nsw_bus,
     active_power = 0.0,
     reactive_power = 0.0,
-    #rating = 440.0,
     rating = 1000.0,
     prime_mover = PrimeMovers.ST,
-    fuel = ThermalFuels.NATURAL_GAS,
+    fuel = ThermalFuels.DISTILLATE_FUEL_OIL,
     active_power_limits = (min = 100.0, max = 1000.0),
     reactive_power_limits = (min = -1.0, max = 1.0),
     ramp_limits = (up = 200.0, down = 200.0),
@@ -112,7 +103,6 @@ peaker = ThermalMultiStart(;
     start_time_limits = (hot = 2.0, warm = 4.0, cold = 6.0),
     start_types = 1,
     operation_cost = ThreePartCost(
-    # cost of $1000/hr
         VariableCost([(2e4, 1e2), (9.2e5, 1e3)]),
         1e3, 0.0, 0.0),
         base_power = 1.0
@@ -144,7 +134,7 @@ nsw_load = PowerLoad(
     1.0,
     0.0
 )
-add_components!(sys, [nsw_bus, tallawarra, bayswater, peaker, nsw_solar, nsw_load])
+add_components!(sys, [nsw_zone, nsw_bus, tallawarra, bayswater, peaker, nsw_solar, nsw_load])
 
 # reserves
 ## bug in StaticReserve - add static requirement for VariableReserve
@@ -179,15 +169,17 @@ add_time_series!(
 # use SingleTimeSeries as forecasts
 transform_single_time_series!(sys, 1, Minute(5))
 
-solver = optimizer_with_attributes(Gurobi.Optimizer)
-#ed_problem_template = template_economic_dispatch()
+# create problem template with problem device formulations
 ed_problem_template = OperationsProblemTemplate()
 set_device_model!(ed_problem_template, ThermalStandard, ThermalDispatch)
 set_device_model!(ed_problem_template, ThermalMultiStart, ThermalDispatch)
 set_device_model!(ed_problem_template, PowerLoad, StaticPowerLoad)
 set_device_model!(ed_problem_template, RenewableDispatch, RenewableConstantPowerFactor)
 set_service_model!(ed_problem_template, VariableReserve{ReserveUp}, RampReserve)
+
+# build ed problem with duals
 ## dual for reserves - :requirement__VariableReserve_ReserveUp
+solver = optimizer_with_attributes(Gurobi.Optimizer)
 problem = OperationsProblem(ed_problem_template, sys;
                             optimizer=solver,
                             constraint_duals=[:CopperPlateBalance,
@@ -196,9 +188,10 @@ problem = OperationsProblem(ed_problem_template, sys;
                             balance_slack_variables=true,
                             services_slack_variables=true
                             )
-# test op problem
-build!(problem, output_dir = joinpath(output_dir, "built"))
+# test building op problem
+build!(problem, output_dir = joinpath(output_dir, "ed-build"))
 
+# assemble simulation sequence and run simulation
 sim_problem = SimulationProblems(ED=problem)
 sim_sequence = SimulationSequence(
     problems=sim_problem,
@@ -212,29 +205,27 @@ sim = Simulation(
     sequence=sim_sequence,
     simulation_folder=output_dir,
 )
-
 build!(sim; serialize=true, console_level=Logging.Info)
 execute!(sim;)
-#execute!(sim; exports="export.json")
 
+# extract outputs and plot
 results = SimulationResults(joinpath(output_dir, "economic_dispatch"))
 ed_results = get_problem_results(results, "ED")
-timestamps = get_realized_timestamps(ed_results)
 variables = read_realized_variables(ed_results)
 generation = get_generation_data(ed_results)
 reserves = get_service_data(ed_results)
 
-gr()
+if !isdir("results")
+    mkdir("results")
+end
+
 set_system!(ed_results, sys)
 p = plot_fuel(ed_results, stack=true);
-savefig(p, "results/fuel_gasmarg_reserves2.png")
+savefig(p, "results/fuel_plot_complex_ed.png")
 duals = read_realized_duals(ed_results)
 prices = duals[:CopperPlateBalance]
 reserves_prices = duals[:requirement__VariableReserve_ReserveUp][:, 2]
 
-if !isdir("results")
-    mkdir("results")
-end
 price_analysis = hcat(prices, reserves_prices,
                       reserves.data[:OR__VariableReserve_ReserveUp][!, 2:4],
                       generation.data[:P__ThermalStandard][!, :Bayswater],
@@ -245,4 +236,4 @@ DataFrames.rename!(price_analysis, ["Datetime", "CopperPlateBalance",
                                     "ReserveDual", "bayswater_reserves",
                                     "peaker_reserves", "tallawarra_reserves",
                                     "bayswater_mw", "tallawarra_mw", "peaker_mw"])
-CSV.write("results/prices_with_reserves2.csv", price_analysis)
+CSV.write("results/values_complex_ed.csv", price_analysis)
