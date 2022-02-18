@@ -210,6 +210,10 @@ function run_simulation()
             ("ED", :devices, :ThermalStandard) => SemiContinuousFF(
                 binary_source_problem = ON,
                 affected_variables = [ACTIVE_POWER],
+            ),
+            ("ED", :devices, :ThermalMultiStart) => SemiContinuousFF(
+                binary_source_problem = ON,
+                affected_variables = [ACTIVE_POWER],
             )
             )
     )
