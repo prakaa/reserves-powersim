@@ -1,9 +1,7 @@
 # This run of the model excludes reserves and sets all generation bar gas as zero cost
 using CSV
-using Cbc
 using Dates
 using DataFrames
-using Ipopt
 using Gurobi
 using Logging
 using TimeSeries
@@ -11,7 +9,7 @@ using PowerSystems
 using PowerSimulations
 using PowerGraphics
 
-output_dir = joinpath("built", "dispatch_data")
+output_dir = joinpath("built", "simple_ed")
 if !isdir(output_dir)
     mkpath(output_dir)
 end
@@ -29,11 +27,10 @@ nsw_zone = LoadZone("NSW-LoadZone",
                     maximum(raw_demand[:, :nsw_demand]),
                     0.0
                     )
-add_component!(sys, nsw_zone)
 
 # buses
 nsw_bus = Bus(1,
-              "NSW", 
+              "NSW",
               "REF",
               nothing,
               nothing,
@@ -117,19 +114,8 @@ nsw_load = PowerLoad(
     1.0,
     0.0
 )
-add_components!(sys, [nsw_bus, tallawarra, bayswater, nsw_solar, nsw_load])
+add_components!(sys, [nsw_zone, nsw_bus, tallawarra, bayswater, nsw_solar, nsw_load])
 
-## reserves
-## bug in StaticReserve - add static requirement for VariableReserve
-#or = VariableReserve{ReserveUp}("OR", true, 300.0, 50.0)
-#add_component!(sys, or)
-#set_services!(bayswater, [or])
-#set_services!(tallawarra, [or])
-#
-## add reserve timeseries
-#add_time_series!(
-#    sys, or, SingleTimeSeries("requirement", TimeArray(di_year, ones(length(di_year))))
-#    )
 
 # add load timeseries
 date_format = Dates.DateFormat("d/m/y H:M")
@@ -141,7 +127,7 @@ nsw_demand_ts = SingleTimeSeries("max_active_power", nsw_demand_data)
 add_time_series!(sys, nsw_load, nsw_demand_ts)
 
 # add PV generation timeseries
-pv_gen = CSV.read("data/nsw_pv_manildra.csv_5mininterpolated.csv", 
+pv_gen = CSV.read("data/nsw_pv_manildra.csv_5mininterpolated.csv",
                   dateformat="yyyy-mm-dd H:M:S", DataFrame)
 pv_gen_data = TimeArray(pv_gen[:, :Datetime], pv_gen[:, :gen_mw])
 pv_gen_ts = SingleTimeSeries("max_active_power", pv_gen_data)
@@ -158,13 +144,13 @@ set_device_model!(ed_problem_template, RenewableDispatch, RenewableConstantPower
 #set_service_model!(ed_problem_template, VariableReserve{ReserveUp}, RampReserve)
 ## dual for reserves - :requirement__VariableReserve_ReserveUp
 problem = OperationsProblem(ed_problem_template, sys;
-                            optimizer=solver, 
+                            optimizer=solver,
                             constraint_duals=[:CopperPlateBalance],
-                            horizon=1, 
+                            horizon=1,
                             balance_slack_variables=true
                             )
 # test op problem
-build!(problem, output_dir = joinpath("built", "problemdata"))
+build!(problem, output_dir = joinpath(output_dir, "ed-build"))
 
 sim_problem = SimulationProblems(ED=problem)
 sim_sequence = SimulationSequence(
@@ -182,24 +168,22 @@ sim = Simulation(
 
 build!(sim; serialize=true, console_level=Logging.Info)
 execute!(sim;)
-#execute!(sim; exports="export.json")
 
 results = SimulationResults(joinpath(output_dir, "economic_dispatch"))
 ed_results = get_problem_results(results, "ED")
 timestamps = get_realized_timestamps(ed_results)
 variables = read_realized_variables(ed_results)
 generation = get_generation_data(ed_results)
-#reserves = get_service_data(ed_results)
-
-gr()
-set_system!(ed_results, sys)
-p = plot_fuel(ed_results, stack=true)
-savefig(p, "results/fuel_gasmarg.png")
-prices = read_realized_duals(ed_results)[:CopperPlateBalance]
 
 if !isdir("results")
     mkdir("results")
 end
-price_analysis = hcat(prices, generation.data[:P__ThermalStandard][!, :Tallawarra])
-DataFrames.rename!(price_analysis, ("x1"=>"tallawarra_mw"))
-CSV.write("results/prices.csv", price_analysis)
+set_system!(ed_results, sys)
+p = plot_fuel(ed_results, stack=true)
+savefig(p, "results/fuel_plot_simple_ed.png")
+prices = read_realized_duals(ed_results)[:CopperPlateBalance]
+
+price_analysis = hcat(prices,
+                      generation.data[:P__ThermalStandard][!, [:Bayswater,
+                                                               :Tallawarra]])
+CSV.write("results/values_simple_ed.csv", price_analysis)
