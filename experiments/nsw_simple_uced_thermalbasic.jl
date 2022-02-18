@@ -219,6 +219,9 @@ p = plot_fuel(ed_results, stack=true);
 if !isdir("results")
     mkdir("results")
 end
-savefig(p, "results/fuel_plot_simple_uced.png")
+savefig(p, "results/fuel_plot_simple_uced_thermalbasic.png")
 duals = read_realized_duals(ed_results)
 mwprices = duals[:CopperPlateBalance]
+
+# time duration on/off are not returned
+uc_values["vars"]

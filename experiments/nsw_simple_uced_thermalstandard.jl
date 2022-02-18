@@ -1,5 +1,4 @@
 # This run of the model runs unit commitment followed by economic dispatch
-## Includes peaker, reserves, battery
 using CSV
 using Dates
 using DataFrames
@@ -35,8 +34,10 @@ function attach_components!(sys::PowerSystems.System)
                                 )
 
     ## ccgt, cost of $0/MW/hr to min load, then $36/MW/hr then $48/MW/hr
+    ### setting time_at_status here appears to be in minutes
     tallawarra = ThermalStandard(; name = "Tallawarra", available = true,
-                                 status = true, bus = nsw_bus, active_power = 0.0,
+                                 status = true, time_at_status = 60.0,
+                                 bus = nsw_bus, active_power = 0.0,
                                  reactive_power = 0.0, rating = 3000.0,
                                  prime_mover = PrimeMovers.ST,
                                  fuel = ThermalFuels.NATURAL_GAS,
@@ -50,26 +51,8 @@ function attach_components!(sys::PowerSystems.System)
                                           (36.0 * (1000.0 - 199.0) + 48.0 * 2000.0,
                                           3000.0)]),
                                      0.0, 50.0, 50.0),
-                                 base_power = 1.0,
+                                 base_power = 1.0
     )
-
-    ## peaker, cost of $200/MW/hr then $1000/MW/hr
-    peaker = ThermalMultiStart(;
-        name = "Peaker", available = true, status = true, bus = nsw_bus,
-        active_power = 0.0, reactive_power = 0.0, rating = 1000.0,
-        prime_mover = PrimeMovers.ST, fuel = ThermalFuels.DISTILLATE_FUEL_OIL,
-        active_power_limits = (min = 100.0, max = 1000.0),
-        reactive_power_limits = (min = -1.0, max = 1.0),
-        ramp_limits = (up = 200.0, down = 200.0),
-        power_trajectory = (startup = 5.0, shutdown = 5.0),
-        time_limits = (up = 0.0, down = 0.0),
-        start_time_limits = (hot = 2.0, warm = 4.0, cold = 6.0),
-        start_types = 3,
-        operation_cost = ThreePartCost(
-            VariableCost([(2e4, 1e2), (9.2e5, 1e3)]),
-            1e3, 0.0, 0.0),
-            base_power = 1.0
-        )
 
     ## VRE
     nsw_solar = RenewableDispatch(; name = "NSWSolar", available = true, bus = nsw_bus,
@@ -85,7 +68,7 @@ function attach_components!(sys::PowerSystems.System)
     ## loads
     nsw_load = PowerLoad("NSWLoad", true, nsw_bus, nothing, 0.0, 0.0, 1.0, 1.0, 0.0)
 
-    add_components!(sys, [nsw_zone, nsw_bus, bayswater, tallawarra, peaker,
+    add_components!(sys, [nsw_zone, nsw_bus, bayswater, tallawarra,
                           nsw_solar, nsw_load])
 end
 
@@ -155,7 +138,7 @@ end
 
 function populate_uc_problem(sys_uc::PowerSystems.System)
     uc_problem_template = OperationsProblemTemplate()
-    set_device_model!(uc_problem_template, ThermalStandard, ThermalBasicUnitCommitment)
+    set_device_model!(uc_problem_template, ThermalStandard, ThermalStandardUnitCommitment)
     set_device_model!(uc_problem_template, PowerLoad, StaticPowerLoad)
     set_device_model!(uc_problem_template, RenewableDispatch, RenewableFullDispatch)
     solver = optimizer_with_attributes(Gurobi.Optimizer,
@@ -238,6 +221,6 @@ p = plot_fuel(ed_results, stack=true);
 if !isdir("results")
     mkdir("results")
 end
-savefig(p, "results/fuel_plot_complex_uced.png")
+savefig(p, "results/fuel_plot_simple_uced_thermalstandard.png")
 duals = read_realized_duals(ed_results)
 mwprices = duals[:CopperPlateBalance]
