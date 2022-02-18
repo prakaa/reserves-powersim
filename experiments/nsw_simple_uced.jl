@@ -32,6 +32,26 @@ function attach_components!(sys::PowerSystems.System)
                                 base_power=1.0, time_limits=(up=0.02, down=0.02),
                                 prime_mover=PrimeMovers.ST, fuel=ThermalFuels.COAL,
                                 )
+
+    ## ccgt, cost of $0/MW/hr to min load, then $36/MW/hr then $48/MW/hr
+    tallawarra = ThermalStandard(; name = "Tallawarra", available = true,
+                                 status = true, bus = nsw_bus, active_power = 0.0,
+                                 reactive_power = 0.0, rating = 3000.0,
+                                 prime_mover = PrimeMovers.ST,
+                                 fuel = ThermalFuels.NATURAL_GAS,
+                                 active_power_limits = (min = 199.0, max = 3000.0),
+                                 reactive_power_limits = (min = -1.0, max = 1.0),
+                                 time_limits = (up = 4.0, down = 4.0),
+                                 ramp_limits = (up = 6.0, down = 6.0),
+                                 operation_cost = ThreePartCost(
+                                     VariableCost(
+                                         [(0.0, 199.0), (36.0 * (1000.0 - 199.0), 1000.0),
+                                          (36.0 * (1000.0 - 199.0) + 48.0 * 2000.0,
+                                          3000.0)]),
+                                     0.0, 50.0, 50.0),
+                                 base_power = 1.0,
+    )
+
     ## VRE
     nsw_solar = RenewableDispatch(; name = "NSWSolar", available = true, bus = nsw_bus,
                                   active_power = 0.0,
@@ -46,7 +66,8 @@ function attach_components!(sys::PowerSystems.System)
     ## loads
     nsw_load = PowerLoad("NSWLoad", true, nsw_bus, nothing, 0.0, 0.0, 1.0, 1.0, 0.0)
 
-    add_components!(sys, [nsw_zone, nsw_bus, bayswater, nsw_solar, nsw_load])
+    add_components!(sys, [nsw_zone, nsw_bus, bayswater, tallawarra,
+                          nsw_solar, nsw_load])
 end
 
 
@@ -99,7 +120,6 @@ end
 function populate_ed_problem(sys_ed::PowerSystems.System)
     ed_problem_template = OperationsProblemTemplate()
     set_device_model!(ed_problem_template, ThermalStandard, ThermalDispatch)
-    #set_device_model!(ed_problem_template, ThermalMultiStart, ThermalDispatch)
     set_device_model!(ed_problem_template, PowerLoad, StaticPowerLoad)
     set_device_model!(ed_problem_template, RenewableDispatch, RenewableFullDispatch)
     solver = optimizer_with_attributes(Gurobi.Optimizer)
@@ -177,10 +197,10 @@ function run_simulation()
 
     build!(sim; serialize=true, console_level=Logging.Info)
     execute!(sim; enable_progress_bar=true)
-    return sys_UC, sys_ED
+    return sys_UC, sys_ED, output_dir
 end
 
-sys_UC, sys_ED = run_simulation()
+sys_UC, sys_ED, output_dir = run_simulation()
 results = SimulationResults(joinpath(output_dir, "EDUC"))
 
 (uc_values, ed_values) = (Dict(), Dict())
@@ -196,5 +216,9 @@ gr()
 ed_results = get_problem_results(results, "ED")
 set_system!(ed_results, sys_ED)
 p = plot_fuel(ed_results, stack=true);
+if !isdir("results")
+    mkdir("results")
+end
+savefig(p, "results/fuel_plot_simple_uced.png")
 duals = read_realized_duals(ed_results)
 mwprices = duals[:CopperPlateBalance]
