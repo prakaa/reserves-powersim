@@ -194,7 +194,7 @@ function run_simulation()
     )
 
     sim = Simulation(
-        name="EDUC",
+        name="EDUC-ThermalStandard",
         steps=4,
         models=sim_models,
         sequence=sim_sequence,
@@ -202,6 +202,7 @@ function run_simulation()
     )
 
     build!(sim; serialize=true, console_level=Logging.Info)
+    @info "This is the execution step"
     execute!(sim; enable_progress_bar=true)
     return sys_UC, sys_ED, output_dir
 end

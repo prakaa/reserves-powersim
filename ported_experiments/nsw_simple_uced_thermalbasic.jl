@@ -23,7 +23,7 @@ function attach_components!(sys::PowerSystems.System)
     ## baseload coal, cost of $12/MW/hr to min load then $24/MW/hr
     bayswater = ThermalStandard(; name="Bayswater", available=true, status=true,
                                 bus=nsw_bus, active_power=0.0, reactive_power=0.0,
-                                rating=1e4, active_power_limits=(min=1000.0, max=1e4),
+                                rating=1e4, active_power_limits=(min=1000.0, max=1e5),
                                 reactive_power_limits=(min=-1.0, max=1.0),
                                 ramp_limits=(up=20.67, down=15.33),
                                 operation_cost=ThreePartCost(
@@ -191,7 +191,7 @@ function run_simulation()
     )
 
     sim = Simulation(
-        name="EDUC",
+        name="EDUC-ThermalBasic",
         steps=4,
         models=sim_models,
         sequence=sim_sequence,
@@ -199,6 +199,7 @@ function run_simulation()
     )
 
     build!(sim; serialize=true, console_level=Logging.Info)
+    @info "This is the execution step"
     execute!(sim; enable_progress_bar=true)
     return sys_UC, sys_ED, sim, output_dir
 end
