@@ -141,6 +141,7 @@ function populate_uc_problem(sys_uc::PowerSystems.System)
                                        "OutputFlag" => 1)
     problem = DecisionModel(uc_problem_template, sys_uc;
                             optimizer=solver,
+                            optimizer_solve_log_print=true,
                             name="UC"
                                 )
     return problem
@@ -199,8 +200,9 @@ function run_simulation()
 
     build!(sim; serialize=true, console_level=Logging.Info)
     execute!(sim; enable_progress_bar=true)
-    return sys_UC, sys_ED, output_dir
+    return sys_UC, sys_ED, sim, output_dir
 end
 
-sys_UC, sys_ED, output_dir = run_simulation()
+sys_UC, sys_ED, sim, output_dir = run_simulation()
+
 results = SimulationResults(joinpath(output_dir, "EDUC"))
