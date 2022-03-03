@@ -138,7 +138,7 @@ function populate_uc_problem(sys_uc::PowerSystems.System)
     set_device_model!(uc_problem_template, PowerLoad, StaticPowerLoad)
     set_device_model!(uc_problem_template, RenewableDispatch, RenewableFullDispatch)
     solver = optimizer_with_attributes(Gurobi.Optimizer,
-                                       "MIPGap" => 0.05, "OutputFlag" => 1)
+                                       "OutputFlag" => 1)
     problem = DecisionModel(uc_problem_template, sys_uc;
                             optimizer=solver,
                             name="UC"

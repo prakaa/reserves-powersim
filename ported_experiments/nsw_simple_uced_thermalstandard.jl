@@ -125,7 +125,9 @@ function populate_ed_problem(sys_ed::PowerSystems.System)
     set_device_model!(ed_problem_template, RenewableDispatch, RenewableFullDispatch)
     solver = optimizer_with_attributes(Gurobi.Optimizer)
     problem = DecisionModel(ed_problem_template, sys_ed;
+                            horizon=1,
                             optimizer=solver,
+                            optimizer_solve_log_print=true,
                             name="ED"
                             )
     return problem
@@ -140,7 +142,9 @@ function populate_uc_problem(sys_uc::PowerSystems.System)
     solver = optimizer_with_attributes(Gurobi.Optimizer,
                                        "MIPGap" => 0.05, "OutputFlag" => 1)
     problem = DecisionModel(uc_problem_template, sys_uc;
+                            horizon=24,
                             optimizer=solver,
+                            optimizer_solve_log_print=true,
                             name="UC"
                                 )
     return problem
