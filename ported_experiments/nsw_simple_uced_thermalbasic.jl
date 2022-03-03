@@ -4,10 +4,11 @@ using Dates
 using DataFrames
 using Gurobi
 using Logging
+using Plots
 using PowerSystems
 using PowerSimulations
-using PowerGraphics
 using Statistics
+using StatsPlots
 using TimeSeries
 
 
@@ -118,31 +119,29 @@ end
 
 
 function populate_ed_problem(sys_ed::PowerSystems.System)
-    ed_problem_template = OperationsProblemTemplate()
-    set_device_model!(ed_problem_template, ThermalStandard, ThermalDispatch)
+    ed_problem_template = ProblemTemplate()
+    set_device_model!(ed_problem_template, ThermalStandard, ThermalBasicDispatch)
     set_device_model!(ed_problem_template, PowerLoad, StaticPowerLoad)
     set_device_model!(ed_problem_template, RenewableDispatch, RenewableFullDispatch)
     solver = optimizer_with_attributes(Gurobi.Optimizer)
-    problem = OperationsProblem(ed_problem_template, sys_ed;
-                                optimizer=solver,
-                                constraint_duals=[:CopperPlateBalance],
-                                horizon=1,
-                                balance_slack_variables=true,
-                                services_slack_variables=true
-                                )
+    problem = DecisionModel(ed_problem_template, sys_ed;
+                            optimizer=solver,
+                            name="ED"
+                            )
     return problem
 end
 
 
 function populate_uc_problem(sys_uc::PowerSystems.System)
-    uc_problem_template = OperationsProblemTemplate()
+    uc_problem_template = ProblemTemplate()
     set_device_model!(uc_problem_template, ThermalStandard, ThermalBasicUnitCommitment)
     set_device_model!(uc_problem_template, PowerLoad, StaticPowerLoad)
     set_device_model!(uc_problem_template, RenewableDispatch, RenewableFullDispatch)
     solver = optimizer_with_attributes(Gurobi.Optimizer,
                                        "MIPGap" => 0.05, "OutputFlag" => 1)
-    problem = OperationsProblem(uc_problem_template, sys_uc;
-                                optimizer=solver, balance_slack_variables = true
+    problem = DecisionModel(uc_problem_template, sys_uc;
+                            optimizer=solver,
+                            name="UC"
                                 )
     return problem
 end
@@ -170,27 +169,30 @@ function run_simulation()
     for (problem, dir) in zip((ed_problem, uc_problem), ("ED", "UC"))
         build!(problem, output_dir = joinpath(output_dir, "stage-build", dir))
     end
-    sim_problems = SimulationProblems(UC = uc_problem, ED = ed_problem)
+    sim_models = SimulationModels(
+        decision_models = [uc_problem, ed_problem],
+    )
 
     # now assemble simulation sequence
     ## feedforward
     sim_sequence = SimulationSequence(
-        problems = sim_problems,
-        intervals = Dict("UC" => (Hour(24), Consecutive()),
-                         "ED" => (Minute(5), Consecutive())),
+        models = sim_models,
         ini_cond_chronology = InterProblemChronology(),
-        feedforward_chronologies = Dict(("UC" => "ED") => Synchronize(periods = 24)),
-        feedforward = Dict(
-            ("ED", :devices, :ThermalStandard) => SemiContinuousFF(
-                binary_source_problem = ON,
-                affected_variables = [ACTIVE_POWER],
-            )
-            )
+        feedforwards = Dict(
+            "ED" => [
+                SemiContinuousFeedforward(
+                    component_type=ThermalStandard,
+                    source=OnVariable,
+                    affected_values=[ActivePowerVariable]
+                )
+            ]
+        )
     )
+
     sim = Simulation(
         name="EDUC",
         steps=4,
-        problems=sim_problems,
+        models=sim_models,
         sequence=sim_sequence,
         simulation_folder=output_dir,
     )
@@ -202,26 +204,3 @@ end
 
 sys_UC, sys_ED, output_dir = run_simulation()
 results = SimulationResults(joinpath(output_dir, "EDUC"))
-
-(uc_values, ed_values) = (Dict(), Dict())
-for (name, res) in zip(("ED", "UC"), (ed_values, uc_values))
-    presults = get_problem_results(results, name)
-    vars = read_realized_variables(presults)
-    gen = get_generation_data(presults).data
-    res["vars"] = vars
-    res["gen"] = gen
-end
-
-gr()
-ed_results = get_problem_results(results, "ED")
-set_system!(ed_results, sys_ED)
-p = plot_fuel(ed_results, stack=true);
-if !isdir("results")
-    mkdir("results")
-end
-savefig(p, "results/fuel_plot_simple_uced_thermalbasic.png")
-duals = read_realized_duals(ed_results)
-mwprices = duals[:CopperPlateBalance]
-
-# time duration on/off are not returned
-uc_values["vars"]
