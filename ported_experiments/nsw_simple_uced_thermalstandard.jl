@@ -11,8 +11,12 @@ using Statistics
 using StatsPlots
 using TimeSeries
 
+import MathOptInterface
+const MOI = MathOptInterface
+
 
 function attach_components!(sys::PowerSystems.System)
+    @info "Attaching components to system"
     # zone
     nsw_zone = LoadZone("NSW-LoadZone", 0.0, 0.0)
     # buses
@@ -22,7 +26,7 @@ function attach_components!(sys::PowerSystems.System)
     # generators
     ## baseload coal, cost of $12/MW/hr to min load then $24/MW/hr
     bayswater = ThermalStandard(; name="Bayswater", available=true, status=true,
-                                bus=nsw_bus, active_power=0.0, reactive_power=0.0,
+                                bus=nsw_bus, active_power=6000.0, reactive_power=0.0,
                                 rating=1e4, active_power_limits=(min=1000.0, max=1e4),
                                 reactive_power_limits=(min=-1.0, max=1.0),
                                 ramp_limits=(up=20.67, down=15.33),
@@ -36,11 +40,11 @@ function attach_components!(sys::PowerSystems.System)
 
     ## ccgt, cost of $0/MW/hr to min load, then $36/MW/hr then $48/MW/hr
     tallawarra = ThermalStandard(; name = "Tallawarra", available = true,
-                                 status = true, bus = nsw_bus, active_power = 0.0,
-                                 reactive_power = 0.0, rating = 3000.0,
+                                 status = true, bus = nsw_bus, active_power = 850.0,
+                                 reactive_power = 0.0, rating = 6000.0,
                                  prime_mover = PrimeMovers.ST,
                                  fuel = ThermalFuels.NATURAL_GAS,
-                                 active_power_limits = (min = 199.0, max = 3000.0),
+                                 active_power_limits = (min = 199.0, max = 6000.0),
                                  reactive_power_limits = (min = -1.0, max = 1.0),
                                  time_limits = (up = 4.0, down = 4.0),
                                  ramp_limits = (up = 6.0, down = 6.0),
@@ -73,6 +77,9 @@ end
 
 
 function attach_timeseries!(sys_ed::PowerSystems.System, sys_uc::PowerSystems.System)
+    """
+    Aggregate 5-minute data to hourly data using mean for the hour.
+    """
     function convert_rt_to_uc(time_array::TimeArray)
         hourly_data = values(collapse(time_array, hour, first, mean)[1:end])
         date_format = Dates.DateFormat("d/m/y H:M")
@@ -82,6 +89,7 @@ function attach_timeseries!(sys_ed::PowerSystems.System, sys_uc::PowerSystems.Sy
         return TimeArray(hours, hourly_data)
     end
     # demand
+    @info "Add demand timeseries"
     raw_demand = CSV.read(joinpath("data", "demand.csv"), DataFrame)
     ## add demand timeseries to ED
     date_format = Dates.DateFormat("d/m/y H:M")
@@ -99,6 +107,7 @@ function attach_timeseries!(sys_ed::PowerSystems.System, sys_uc::PowerSystems.Sy
     add_time_series!(sys_uc, uc_load, nsw_demand_uc)
 
     # VRE generation
+    @info "Add VRE timeseries"
     pv_gen = CSV.read("data/nsw_pv_manildra.csv_5mininterpolated.csv",
                       DataFrame)
     ## add PV generation timeseries
@@ -113,39 +122,44 @@ function attach_timeseries!(sys_ed::PowerSystems.System, sys_uc::PowerSystems.Sy
     add_time_series!(sys_uc, uc_pv, pv_gen_uc)
 
     # use SingleTimeSeries as forecasts
+    @info "Specify ED as a single interval 5-minute problem"
     transform_single_time_series!(sys_ed, 1, Minute(5))
+    @info "Specify UC as a 24 hour problem"
     transform_single_time_series!(sys_uc, 24, Hour(24))
 end
 
 
-function populate_ed_problem(sys_ed::PowerSystems.System)
-    ed_problem_template = ProblemTemplate()
+function populate_ed_problem(sys_ed::PowerSystems.System,
+                             solver::MOI.OptimizerWithAttributes)
+    @info "Building ED Problem with device models"
+    ed_problem_template = ProblemTemplate(NetworkModel(
+        CopperPlatePowerModel, duals = [CopperPlateBalanceConstraint]
+    ))
     set_device_model!(ed_problem_template, ThermalStandard, ThermalStandardDispatch)
     set_device_model!(ed_problem_template, PowerLoad, StaticPowerLoad)
     set_device_model!(ed_problem_template, RenewableDispatch, RenewableFullDispatch)
-    solver = optimizer_with_attributes(Gurobi.Optimizer)
     problem = DecisionModel(ed_problem_template, sys_ed;
                             horizon=1,
                             optimizer=solver,
                             optimizer_solve_log_print=true,
-                            name="ED"
+                            name="ED", warm_start=false
                             )
     return problem
 end
 
 
-function populate_uc_problem(sys_uc::PowerSystems.System)
+function populate_uc_problem(sys_uc::PowerSystems.System,
+                             solver::MOI.OptimizerWithAttributes)
+    @info "Building UC Problem with device models"
     uc_problem_template = ProblemTemplate()
     set_device_model!(uc_problem_template, ThermalStandard, ThermalStandardUnitCommitment)
     set_device_model!(uc_problem_template, PowerLoad, StaticPowerLoad)
     set_device_model!(uc_problem_template, RenewableDispatch, RenewableFullDispatch)
-    solver = optimizer_with_attributes(Gurobi.Optimizer,
-                                       "MIPGap" => 0.05, "OutputFlag" => 1)
     problem = DecisionModel(uc_problem_template, sys_uc;
                             horizon=24,
                             optimizer=solver,
                             optimizer_solve_log_print=true,
-                            name="UC"
+                            name="UC", warm_start=false
                                 )
     return problem
 end
@@ -166,13 +180,16 @@ function run_simulation()
     end
     attach_timeseries!(sys_ED, sys_UC)
 
-    ed_problem = populate_ed_problem(sys_ED)
-    uc_problem = populate_uc_problem(sys_UC)
+    solver = optimizer_with_attributes(Gurobi.Optimizer,
+                                       "MIPGap" => 0.5, "OutputFlag" => 1, "GURO_PAR_DUMP" => 1)
+    ed_problem = populate_ed_problem(sys_ED, solver)
+    uc_problem = populate_uc_problem(sys_UC, solver)
 
     # test building operational problems
     for (problem, dir) in zip((ed_problem, uc_problem), ("ED", "UC"))
         build!(problem, output_dir = joinpath(output_dir, "stage-build", dir))
     end
+    f = open("uced_thermalstandard.txt","w"); print(f, PowerSimulations.get_jump_model(uc_problem)); close(f)
     sim_models = SimulationModels(
         decision_models = [uc_problem, ed_problem],
     )
@@ -202,10 +219,14 @@ function run_simulation()
     )
 
     build!(sim; serialize=true, console_level=Logging.Info)
-    @info "This is the execution step"
+    @info "Executing simulation"
     execute!(sim; enable_progress_bar=true)
     return sys_UC, sys_ED, output_dir
 end
 
-sys_UC, sys_ED, output_dir = run_simulation()
-results = SimulationResults(joinpath(output_dir, "EDUC"))
+try
+    sys_UC, sys_ED, output_dir = run_simulation()
+    results = SimulationResults(joinpath(output_dir, "EDUC-ThermalStandard"))
+catch
+    @error "Simulation error"
+end
