@@ -1,3 +1,6 @@
+# IntraProblemChronology is not well defined for all problems
+# InterProblemChronology will enforce ramping constraints, but expects variables to be fed
+# forward (e.g. OnVariable) from a UC stage. So a pure ED problem cannot be implemented.
 using CSV
 using Dates
 using DataFrames
@@ -102,7 +105,7 @@ function build_ed_model(output_dir::String)
 
     # build decision model
     solver = optimizer_with_attributes(Gurobi.Optimizer)
-    model = DecisionModel(ed_model_template, sys; optimizer=solver, horizon=1)
+    model = DecisionModel(ed_model_template, sys; optimizer=solver, horizon=1, name="ED")
     # test op model
     # running solve on this runs a single step of the model
     @info "Building ED decision model"
